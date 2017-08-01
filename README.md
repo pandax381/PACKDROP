@@ -10,6 +10,8 @@ Rapberry Pi based Handmade Network Emulator (Packet loss and delay injector)
 $ dd if=PACKDROP_1.2.1.img of=/dev/sda bs=1m
 ```
 
+*This image can be used with both Raspberry Pi 2B or 3B.*
+
 ## Configuration
 
 The following files are copied from sdcard to rootfs at boot time.
