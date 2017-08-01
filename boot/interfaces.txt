@@ -1,0 +1,40 @@
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet static
+    address 0.0.0.0
+    offload-tso off
+    offload-ufo off
+    offload-gso off
+    offload-gro off
+    offload-lro off
+    up sysctl -w net.ipv6.conf.$IFACE.disable_ipv6=1 >/dev/null 2>&1
+
+auto eth1
+iface eth1 inet static
+    address 0.0.0.0
+    offload-tso off
+    offload-ufo off
+    offload-gso off
+    offload-gro off
+    offload-lro off
+    up sysctl -w net.ipv6.conf.$IFACE.disable_ipv6=1 >/dev/null 2>&1
+
+auto wlan0
+iface wlan0 inet static
+    address 0.0.0.0
+    offload-tso off
+    offload-ufo off
+    offload-gso off
+    offload-gro off
+    offload-lro off
+    up sysctl -w net.ipv6.conf.$IFACE.disable_ipv6=1 >/dev/null 2>&1
+
+auto br0
+iface br0 inet static
+    address 0.0.0.0
+    bridge_ports eth0 eth1 wlan0
+    bridge_maxwait 3
+    up sysctl -w net.ipv6.conf.$IFACE.disable_ipv6=1 >/dev/null 2>&1
+    up echo 0 > /sys/devices/virtual/net/$IFACE/bridge/multicast_snooping

@@ -1,0 +1,5 @@
+initramfs initramfs.img
+
+dtparam=spi=on
+dtparam=i2c_arm=on
+dtoverlay=pi3-miniuart-bt
