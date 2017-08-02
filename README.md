@@ -1,6 +1,8 @@
 # PACKDROP
+
 Rapberry Pi based Handmade Network Emulator (Packet loss and delay injector)
 
+<img src="doc/packdrop.jpg" width="640" />
 
 ## SD Image
 
