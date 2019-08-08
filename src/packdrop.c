@@ -1,42 +1,39 @@
-/*
- * Copyright (c) 2016,2017 YAMAMOTO Masaya, KLab Inc.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to
- * deal in the Software without restriction, including without limitation the
- * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
- * sell copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
- */
-
+#include <stdio.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
+#include <math.h>
 #include <wiringPi.h>
 #include <wiringPiSPI.h>
-#include <mcp3002.h>
 
 #define APP_NAME     "PACKDROP"
-#define APP_VERSION  "v1.2.1"
+#define APP_VERSION  "v2.0a"
 
-#define SPI_CHANNEL  (0)
-#define PINBASE      (100)
-#define VOLUME_DELAY (PINBASE)
-#define VOLUME_LOSS  (PINBASE+1)
-#define SW_ON        (0)
-#define PIN_LED      (17)
-#define PIN_SW       (22)
+#define PIN_LED (27)
+#define PIN_SW  (22)
+#define PIN_D_A (5)
+#define PIN_D_B (6)
+#define PIN_L_A (26)
+#define PIN_L_B (16)
+
+#define SW_ON   (0)
+
+struct {
+    int a;
+    int b;
+    struct {
+        int a;
+        int b;
+    } p;
+    int num;
+    int min;
+    int max;
+} d = {1, 1, {0, 0}, 0, 0, 10000}, l = {1, 1, {0, 0}, 0, 0, 100};
+
+struct {
+    int num;
+} s = {!SW_ON};
 
 char **devices;
 int devnum;
@@ -45,7 +42,7 @@ static void
 tc_set (const char *dev, int delay, int loss) {
     char cmd[128];
 
-    snprintf(cmd, sizeof(cmd), "tc qdisc change dev %s root netem delay %dms loss %d%%", dev, delay, loss);
+    snprintf(cmd, sizeof(cmd), "tc qdisc change dev %s root netem limit 10000 delay %dms loss %d%%", dev, delay, loss);
     system(cmd);
 }
 
@@ -55,7 +52,7 @@ tc_init (const char *dev) {
 
     snprintf(cmd, sizeof(cmd), "tc qdisc del dev %s root >/dev/null 2>&1", dev);
     system(cmd);
-    snprintf(cmd, sizeof(cmd), "tc qdisc add dev %s root netem delay 0ms loss 0%%", dev);
+    snprintf(cmd, sizeof(cmd), "tc qdisc add dev %s root netem limit 10000 delay 0ms loss 0%%", dev);
     system(cmd);
 }
 
@@ -78,7 +75,7 @@ static void
 lcd_write (int delay, int loss) {
     char upper[9], lower[9];
 
-    snprintf(upper, sizeof(upper), " %4d ms", delay);
+    snprintf(upper, sizeof(upper), "%5d ms", delay);
     snprintf(lower, sizeof(lower), "  %3d %% ", loss);
     lcd_write_core(upper, lower);
 }
@@ -96,8 +93,85 @@ lcd_init (void) {
 }
 
 static void
+delay_inc (void) {
+    int v;
+
+    if (s.num == SW_ON) {
+        return;
+    }
+    v = digitalRead(PIN_D_B);
+    if (v != d.b) {
+        d.p.b = d.b; d.b = v;
+        if (!d.a && !d.b && d.p.a && d.p.b) {
+            if (d.num < d.max) {
+                d.num += d.num < 100 ? 1 : (d.num < 1000 ? 10 : 100);
+            }
+        }
+    }
+}
+
+static void
+delay_dec (void) {
+    int v;
+
+    if (s.num == SW_ON) {
+        return;
+    }
+    v = digitalRead(PIN_D_A);
+    if (v != d.a) {
+        d.p.a = d.a; d.a = v;
+        if (!d.a && !d.b && d.p.a && d.p.b) {
+            if (d.num > d.min) {
+                d.num -= d.num <= 100 ? 1 : (d.num <= 1000 ? 10 : 100);
+            }
+        }
+    }
+}
+
+static void
+loss_inc (void) {
+    int v;
+
+    if (s.num == SW_ON) {
+        return;
+    }
+    v = digitalRead(PIN_L_B);
+    if (v != l.b) {
+        l.p.b = l.b; l.b = v;
+        if (!l.a && !l.b && l.p.a && l.p.b) {
+            if (l.num < l.max) {
+                l.num += 1;
+            }
+        }
+    }
+}
+
+void
+loss_dec (void) {
+    int v;
+
+    if (s.num == SW_ON) {
+        return;
+    }
+    v = digitalRead(PIN_L_A);
+    if (v != l.a) {
+        l.p.a = l.a; l.a = v;
+        if (!l.a && !l.b && l.p.a && l.p.b) {
+            if (l.num > l.min) {
+                l.num -= 1;
+            }
+        }
+    }
+}
+
+static void
+sw_event (void) {
+    s.num = digitalRead(PIN_SW);
+}
+
+static void
 burst_mode (void) {
-    int n, v;
+    int n;
 
     for (n = 0; n < devnum; n++) {
         tc_set(devices[n], 0, 100);
@@ -105,56 +179,63 @@ burst_mode (void) {
     lcd_write_core(" burst  ", "   mode ");
     digitalWrite(PIN_LED, 1);
     while (1) {
-        v  = digitalRead(PIN_SW);
-        if (v != SW_ON) {
+        if (s.num != SW_ON) {
             break;
         }
-        sleep(1);
+        usleep(10000);
     }
 }
 
 int
-main (int argc, char *argv[]){
-    int n, v, b, d, l;
-    int delay = 0, loss = 0;
+main (int argc, char *argv[]) {
+    int n, delay = 0, loss = 0;
 
     lcd_init();
     if (wiringPiSetupGpio() == -1) {
-        printf("wiringPiSetupGpio: failed\n");
+        fprintf(stderr, "wiringPiSetup: error\n");
         return -1;
     }
+    /* LED */
     pinMode(PIN_LED, OUTPUT);
+    digitalWrite(PIN_LED, 0);
+    /* SW */
     pinMode(PIN_SW, INPUT);
     pullUpDnControl(PIN_SW, PUD_UP);
-    if (mcp3002Setup(PINBASE, SPI_CHANNEL) < 0) {
-        printf("mpc3002Setup: failed\n");
-        return -1;
-    }
+    wiringPiISR(PIN_SW, INT_EDGE_BOTH, sw_event);
+    /* ENC (DELAY) */
+    pinMode(PIN_D_A, INPUT);
+    pinMode(PIN_D_B, INPUT);
+    pullUpDnControl(PIN_D_A, PUD_UP);
+    pullUpDnControl(PIN_D_B, PUD_UP);
+    wiringPiISR(PIN_D_A, INT_EDGE_BOTH, delay_dec);
+    wiringPiISR(PIN_D_B, INT_EDGE_BOTH, delay_inc);
+    /* ENC (LOSS) */
+    pinMode(PIN_L_A, INPUT);
+    pinMode(PIN_L_B, INPUT);
+    pullUpDnControl(PIN_L_A, PUD_UP);
+    pullUpDnControl(PIN_L_B, PUD_UP);
+    wiringPiISR(PIN_L_A, INT_EDGE_BOTH, loss_dec);
+    wiringPiISR(PIN_L_B, INT_EDGE_BOTH, loss_inc);
     devices = argv + 1;
     devnum  = argc - 1;
     for (n = 0; n < devnum; n++) {
         tc_init(devices[n]);
     }
-    while (1) {
-        v = digitalRead(PIN_SW);
-        b = (v == SW_ON) ? 1 : 0;
-        if (b) {
+    while (1){
+	if (s.num == SW_ON) {
             burst_mode();
+            delay = loss = -1;
         }
-        v = analogRead(VOLUME_DELAY);
-        d = ++v / 2;
-        v = analogRead(VOLUME_LOSS);
-        l = ((float)++v / 1024) * 100;
-        if (d != delay || l != loss || b) {
-            delay = d;
-            loss  = l;
+        if (delay != d.num || loss != l.num) {
+            delay = d.num;
+            loss = l.num;
             for (n = 0; n < devnum; n++) {
                 tc_set(devices[n], delay, loss);
             }
             lcd_write(delay, loss);
-            digitalWrite(PIN_LED, (delay || loss) ? 1 : 0);
+	    digitalWrite(PIN_LED, (delay || loss) ? 1 : 0);
         }
-        sleep(1);
+        usleep(10000);
     }
     return 0;
 }
